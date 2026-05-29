@@ -48,7 +48,7 @@
         chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
       args:
         executable: /bin/bash
-      creates: /usr/local/lib/docker/cli-plugins/docker-compose
+        creates: /usr/local/lib/docker/cli-plugins/docker-compose
 
     - name: Ensure application directory exists
       ansible.builtin.file:
