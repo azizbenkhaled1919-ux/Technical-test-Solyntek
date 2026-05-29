@@ -8,16 +8,24 @@
     database_url: "mongodb://mongodb:27017/solyntek_db"
     swapfile_path: /swapfile
     swap_size_mb: 4096
-    swap_size_bytes: "{{ swap_size_mb * 1024 * 1024 }}"
+    swap_size_bytes: "{{ (swap_size_mb | int) * 1024 * 1024 }}"
 
   tasks:
+    - name: Fail if JWT secret was not provided
+      ansible.builtin.assert:
+        that:
+          - jwt_secret is defined
+          - (jwt_secret | trim | length) > 0
+        fail_msg: "Provide jwt_secret via extra vars before deployment."
+
     - name: Ensure required apt packages are installed
       ansible.builtin.apt:
         name:
           - docker.io
-          - docker-compose
+          - docker-compose-plugin
         state: present
         update_cache: true
+        cache_valid_time: 3600
 
     - name: Ensure Docker service is enabled and running
       ansible.builtin.service:
@@ -57,13 +65,6 @@
         group: "{{ app_group }}"
         mode: preserve
 
-    - name: Fail if JWT secret was not provided
-      ansible.builtin.assert:
-        that:
-          - jwt_secret is defined
-          - (jwt_secret | trim | length) > 0
-        fail_msg: "Provide jwt_secret via extra vars before deployment."
-
     - name: Create application environment file
       ansible.builtin.copy:
         dest: "{{ app_dir }}/.env"
@@ -74,6 +75,7 @@
           DATABASE={{ database_url }}
           JWT_SECRET={{ jwt_secret }}
           REACT_APP_SERVER_URL={{ react_app_server_url | default('http://' ~ ansible_host ~ ':8000/api') }}
+      no_log: true
 
     - name: Check if swapfile exists
       ansible.builtin.stat:
@@ -122,8 +124,7 @@
         state: present
 
     - name: Prune unused Docker data to free disk space
-      ansible.builtin.shell: |
-        docker system prune -af || true
+      ansible.builtin.shell: docker system prune -f || true
       args:
         executable: /bin/bash
 
@@ -133,18 +134,13 @@
         cd "{{ app_dir }}"
         export DOCKER_BUILDKIT=0
         export COMPOSE_DOCKER_CLI_BUILD=0
-        docker-compose down --remove-orphans || true
-        docker-compose up -d --build
+        docker compose down --remove-orphans || true
+        docker compose up -d --build
       args:
         executable: /bin/bash
       async: 3600
       poll: 0
       register: build_job
-
-    - name: Wait for SSH to become available
-      ansible.builtin.wait_for_connection:
-        delay: 5
-        timeout: 600
 
     - name: Wait for containers build to finish
       ansible.builtin.async_status:
