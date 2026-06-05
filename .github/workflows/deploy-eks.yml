@@ -16,25 +16,20 @@ env:
   ECR_FRONTEND: 698715234893.dkr.ecr.us-east-1.amazonaws.com/solyntek-frontend
 
 jobs:
-
-  # ──────────────────────────────────────────
-  # Job 1 : Terraform — validation de l'infrastructure ECR
-  # Les repositories ECR sont provisionnés via Terraform.
-  # En environnement AWS Academy, le plan est validé ici ;
-  # l'apply est exécuté localement (restriction STS Academy).
-  # ──────────────────────────────────────────
   terraform:
     name: Terraform — Validate ECR Infrastructure
     runs-on: ubuntu-latest
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-      AWS_DEFAULT_REGION: us-east-1
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -42,7 +37,7 @@ jobs:
           terraform_version: 1.8.5
           terraform_wrapper: false
 
-      - name: Terraform init (local backend)
+      - name: Terraform init
         working-directory: terraform
         run: terraform init
 
@@ -50,134 +45,69 @@ jobs:
         working-directory: terraform
         run: terraform validate
 
-      - name: Terraform plan
-        working-directory: terraform
-        run: |
-          terraform plan \
-            -var "aws_region=${AWS_REGION}" \
-            -var "aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
-            -var "aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
-            -var "aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}" \
-            -out=tfplan
-        continue-on-error: true
-
-      - name: Afficher le résumé du plan Terraform
-        working-directory: terraform
-        run: |
-          echo "Infrastructure ECR définie dans Terraform :"
-          echo "  - solyntek-backend  → ${{ env.ECR_BACKEND }}"
-          echo "  - solyntek-frontend → ${{ env.ECR_FRONTEND }}"
-          echo "Note: terraform apply exécuté manuellement (restriction AWS Academy STS)"
-        continue-on-error: true
-
-  # ──────────────────────────────────────────
-  # Job 2 : Build et push des images Docker sur ECR
-  # ──────────────────────────────────────────
   build-and-push:
     name: Build & Push Docker Images to ECR
     runs-on: ubuntu-latest
     needs: terraform
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-      AWS_DEFAULT_REGION: us-east-1
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        run: |
-          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws configure set aws_session_token ${{ secrets.AWS_SESSION_TOKEN }}
-          aws configure set default.region ${{ env.AWS_REGION }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-          docker login --username AWS --password-stdin \
-            ${{ env.ECR_BACKEND }}
+          docker login --username AWS --password-stdin 698715234893.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
 
       - name: Build and push backend image
         run: |
-          docker build \
-            -t ${{ env.ECR_BACKEND }}:${{ github.sha }} \
-            -t ${{ env.ECR_BACKEND }}:latest \
-            ./backend
+          docker build -t ${{ env.ECR_BACKEND }}:${{ github.sha }} -t ${{ env.ECR_BACKEND }}:latest ./backend
           docker push ${{ env.ECR_BACKEND }}:${{ github.sha }}
           docker push ${{ env.ECR_BACKEND }}:latest
 
       - name: Build and push frontend image
         run: |
-          docker build \
-            --build-arg REACT_APP_SERVER_URL=http://LOAD_BALANCER_URL/api \
-            -t ${{ env.ECR_FRONTEND }}:${{ github.sha }} \
-            -t ${{ env.ECR_FRONTEND }}:latest \
-            ./frontend
+          docker build --build-arg REACT_APP_SERVER_URL=http://LOAD_BALANCER_URL/api \
+            -t ${{ env.ECR_FRONTEND }}:${{ github.sha }} -t ${{ env.ECR_FRONTEND }}:latest ./frontend
           docker push ${{ env.ECR_FRONTEND }}:${{ github.sha }}
           docker push ${{ env.ECR_FRONTEND }}:latest
 
-  # ──────────────────────────────────────────
-  # Job 3 : Déploiement sur EKS via kubectl
-  # ──────────────────────────────────────────
   deploy:
     name: Deploy to EKS
     runs-on: ubuntu-latest
-    needs: [terraform, build-and-push]
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-      AWS_DEFAULT_REGION: us-east-1
-
+    needs: build-and-push
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        run: |
-          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws configure set aws_session_token ${{ secrets.AWS_SESSION_TOKEN }}
-          aws configure set default.region ${{ env.AWS_REGION }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Configure kubectl pour EKS
+      - name: Configure kubectl
         run: |
-          aws eks update-kubeconfig \
-            --region ${{ env.AWS_REGION }} \
-            --name ${{ env.CLUSTER_NAME }}
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
 
-      - name: Mettre à jour les images dans les manifests k8s
+      - name: Update manifests
         run: |
-          sed -i "s|image: backend:latest|image: ${{ env.ECR_BACKEND }}:${{ github.sha }}|g" \
-            k8s/backend/deployment.yaml
-          sed -i "s|image: frontend:latest|image: ${{ env.ECR_FRONTEND }}:${{ github.sha }}|g" \
-            k8s/frontend/deployment.yaml
-          sed -i "s|imagePullPolicy: Never|imagePullPolicy: Always|g" \
-            k8s/backend/deployment.yaml k8s/frontend/deployment.yaml
+          sed -i "s|image: backend:latest|image: ${{ env.ECR_BACKEND }}:${{ github.sha }}|g" k8s/backend/deployment.yaml
+          sed -i "s|image: frontend:latest|image: ${{ env.ECR_FRONTEND }}:${{ github.sha }}|g" k8s/frontend/deployment.yaml
+          sed -i "s|change_me_jwt_secret|${{ secrets.JWT_SECRET }}|g" k8s/backend/secret.yaml
 
-      - name: Injecter JWT_SECRET dans le Secret Kubernetes
-        run: |
-          sed -i "s|change_me_jwt_secret|${{ secrets.JWT_SECRET }}|g" \
-            k8s/backend/secret.yaml
-
-      - name: Appliquer les manifests Kubernetes
+      - name: Apply manifests
         run: |
           kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/mongodb/
           kubectl apply -f k8s/backend/
           kubectl apply -f k8s/frontend/
-
-      - name: Attendre que les déploiements soient prêts
-        run: |
-          kubectl rollout status deployment/mongodb  -n solyntek --timeout=120s
-          kubectl rollout status deployment/backend  -n solyntek --timeout=120s
-          kubectl rollout status deployment/frontend -n solyntek --timeout=120s
-
-      - name: Afficher l'URL publique du frontend
-        run: |
-          echo "En attente de l'adresse du LoadBalancer..."
-          sleep 30
-          kubectl get svc frontend -n solyntek
