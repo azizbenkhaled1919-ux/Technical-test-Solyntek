@@ -22,8 +22,8 @@ jobs:
     name: Provision EKS Infrastructure
     runs-on: ubuntu-latest
     outputs:
-      cluster_name:    ${{ steps.tf_output.outputs.cluster_name }}
-      ecr_backend_url: ${{ steps.tf_output.outputs.ecr_backend_url }}
+      cluster_name:     ${{ steps.tf_output.outputs.cluster_name }}
+      ecr_backend_url:  ${{ steps.tf_output.outputs.ecr_backend_url }}
       ecr_frontend_url: ${{ steps.tf_output.outputs.ecr_frontend_url }}
 
     steps:
@@ -31,12 +31,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region:            ${{ env.AWS_REGION }}
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set aws_session_token ${{ secrets.AWS_SESSION_TOKEN }}
+          aws configure set default.region ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -69,8 +68,8 @@ jobs:
         id: tf_output
         working-directory: terraform
         run: |
-          echo "cluster_name=$(terraform output -raw cluster_name)"       >> "${GITHUB_OUTPUT}"
-          echo "ecr_backend_url=$(terraform output -raw ecr_backend_url)" >> "${GITHUB_OUTPUT}"
+          echo "cluster_name=$(terraform output -raw cluster_name)"         >> "${GITHUB_OUTPUT}"
+          echo "ecr_backend_url=$(terraform output -raw ecr_backend_url)"   >> "${GITHUB_OUTPUT}"
           echo "ecr_frontend_url=$(terraform output -raw ecr_frontend_url)" >> "${GITHUB_OUTPUT}"
 
   # ──────────────────────────────────────────
@@ -86,29 +85,29 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region:            ${{ env.AWS_REGION }}
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set aws_session_token ${{ secrets.AWS_SESSION_TOKEN }}
+          aws configure set default.region ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: ecr_login
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+          docker login --username AWS --password-stdin \
+            ${{ needs.terraform.outputs.ecr_backend_url }}
 
       - name: Build and push backend image
         run: |
-          docker build -t ${{ needs.terraform.outputs.ecr_backend_url }}:${{ github.sha }} \
-                       -t ${{ needs.terraform.outputs.ecr_backend_url }}:latest \
-                       ./backend
+          docker build \
+            -t ${{ needs.terraform.outputs.ecr_backend_url }}:${{ github.sha }} \
+            -t ${{ needs.terraform.outputs.ecr_backend_url }}:latest \
+            ./backend
           docker push ${{ needs.terraform.outputs.ecr_backend_url }}:${{ github.sha }}
           docker push ${{ needs.terraform.outputs.ecr_backend_url }}:latest
 
       - name: Build and push frontend image
         run: |
-          # L'URL du backend sera l'adresse du LoadBalancer créé par Kubernetes
-          # On utilise un placeholder ici ; voir la note dans le README
           docker build \
             --build-arg REACT_APP_SERVER_URL=http://LOAD_BALANCER_URL/api \
             -t ${{ needs.terraform.outputs.ecr_frontend_url }}:${{ github.sha }} \
@@ -130,12 +129,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region:            ${{ env.AWS_REGION }}
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set aws_session_token ${{ secrets.AWS_SESSION_TOKEN }}
+          aws configure set default.region ${{ env.AWS_REGION }}
 
       - name: Configure kubectl pour EKS
         run: |
@@ -145,18 +143,15 @@ jobs:
 
       - name: Mettre à jour les images dans les manifests k8s
         run: |
-          # Remplace "backend:latest" par l'URL ECR complète
           sed -i "s|image: backend:latest|image: ${{ needs.terraform.outputs.ecr_backend_url }}:${{ github.sha }}|g" \
             k8s/backend/deployment.yaml
           sed -i "s|image: frontend:latest|image: ${{ needs.terraform.outputs.ecr_frontend_url }}:${{ github.sha }}|g" \
             k8s/frontend/deployment.yaml
-          # Sur EKS les images viennent d'ECR, pas besoin de Never
           sed -i "s|imagePullPolicy: Never|imagePullPolicy: Always|g" \
             k8s/backend/deployment.yaml k8s/frontend/deployment.yaml
 
       - name: Injecter JWT_SECRET dans le Secret Kubernetes
         run: |
-          # Remplace la valeur placeholder dans secret.yaml avant d'appliquer
           sed -i "s|change_me_jwt_secret|${{ secrets.JWT_SECRET }}|g" \
             k8s/backend/secret.yaml
 
