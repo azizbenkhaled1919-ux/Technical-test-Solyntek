@@ -7,29 +7,21 @@ terraform {
       version = "~> 5.0"
     }
   }
-
-  backend "s3" {
-    bucket                      = "aziz-linda"
-    key                         = "solyntek/terraform.tfstate"
-    region                      = "us-east-1"
-    encrypt                     = true
-    skip_credentials_validation = true
-    skip_metadata_api_check     = true
-    skip_region_validation      = true
-  }
 }
 
 provider "aws" {
-  region                      = var.aws_region
+  region     = var.aws_region
+  access_key = var.aws_access_key
+  secret_key = var.aws_secret_key
+  token      = var.aws_session_token
+
   skip_credentials_validation = true
   skip_metadata_api_check     = true
   skip_requesting_account_id  = true
 }
 
 # ─────────────────────────────────────────────
-# ECR : registres privés pour stocker les images Docker
-# Le cluster EKS est créé manuellement dans AWS Academy
-# car STS est restreint dans cet environnement
+# ECR : repositories pour les images Docker
 # ─────────────────────────────────────────────
 resource "aws_ecr_repository" "backend" {
   name                 = "solyntek-backend"
