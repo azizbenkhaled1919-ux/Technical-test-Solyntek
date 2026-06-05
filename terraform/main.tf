@@ -8,19 +8,23 @@ terraform {
     }
   }
 
-backend "s3" {
+  backend "s3" {
     encrypt                     = true
     skip_credentials_validation = true
     skip_metadata_api_check     = true
     skip_region_validation      = true
   }
+}
 
 provider "aws" {
-  region = var.aws_region
+  region                      = var.aws_region
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
 }
 
 # ─────────────────────────────────────────────
-# Réseau : récupère le VPC par défaut et ses subnets
+# Réseau
 # ─────────────────────────────────────────────
 data "aws_vpc" "default" {
   default = true
@@ -34,7 +38,7 @@ data "aws_subnets" "default" {
 }
 
 # ─────────────────────────────────────────────
-# IAM : rôle pour le control plane EKS
+# IAM : rôle control plane EKS
 # ─────────────────────────────────────────────
 resource "aws_iam_role" "eks_cluster_role" {
   name = "${var.project_name}-eks-cluster-role"
@@ -55,7 +59,7 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 }
 
 # ─────────────────────────────────────────────
-# IAM : rôle pour les nodes (machines qui font tourner les pods)
+# IAM : rôle nodes EKS
 # ─────────────────────────────────────────────
 resource "aws_iam_role" "eks_node_role" {
   name = "${var.project_name}-eks-node-role"
@@ -82,7 +86,6 @@ resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
 
 resource "aws_iam_role_policy_attachment" "eks_ecr_readonly" {
   role       = aws_iam_role.eks_node_role.name
-  # Permet aux nodes de puller les images depuis ECR
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
@@ -104,7 +107,7 @@ resource "aws_eks_cluster" "solyntek" {
 }
 
 # ─────────────────────────────────────────────
-# Node Group : les machines EC2 qui hébergent les pods
+# Node Group
 # ─────────────────────────────────────────────
 resource "aws_eks_node_group" "solyntek_nodes" {
   cluster_name    = aws_eks_cluster.solyntek.name
@@ -129,20 +132,18 @@ resource "aws_eks_node_group" "solyntek_nodes" {
 }
 
 # ─────────────────────────────────────────────
-# ECR : registres privés pour stocker les images Docker
+# ECR : registres privés pour les images Docker
 # ─────────────────────────────────────────────
 resource "aws_ecr_repository" "backend" {
   name                 = "${var.project_name}-backend"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
-
-  tags = var.tags
+  tags                 = var.tags
 }
 
 resource "aws_ecr_repository" "frontend" {
   name                 = "${var.project_name}-frontend"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
-
-  tags = var.tags
+  tags                 = var.tags
 }
