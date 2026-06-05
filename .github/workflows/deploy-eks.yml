@@ -35,13 +35,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        run: |
-          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws configure set aws_session_token ${{ secrets.AWS_SESSION_TOKEN }}
-          aws configure set default.region ${{ env.AWS_REGION }}
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -60,7 +53,10 @@ jobs:
         working-directory: terraform
         run: |
           terraform apply -auto-approve -input=false \
-            -var "aws_region=${AWS_REGION}"
+            -var "aws_region=${AWS_REGION}" \
+            -var "aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            -var "aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            -var "aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}"
 
       - name: Capture Terraform outputs
         id: tf_output
