@@ -21,6 +21,9 @@ provider "aws" {
   skip_credentials_validation = true
   skip_metadata_api_check     = true
   skip_requesting_account_id  = true
+
+  # Fournit l'Account ID directement via variable d'environnement
+  # AWS_ACCOUNT_ID est injecté par le workflow GitHub Actions
 }
 
 # ─────────────────────────────────────────────
@@ -132,7 +135,7 @@ resource "aws_eks_node_group" "solyntek_nodes" {
 }
 
 # ─────────────────────────────────────────────
-# ECR : registres privés pour les images Docker
+# ECR
 # ─────────────────────────────────────────────
 resource "aws_ecr_repository" "backend" {
   name                 = "${var.project_name}-backend"
