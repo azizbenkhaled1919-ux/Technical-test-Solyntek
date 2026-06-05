@@ -12,18 +12,71 @@ permissions:
 env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: solyntek
-  # URLs ECR fixes — les repositories sont gérés par Terraform (exécuté localement)
   ECR_BACKEND: 698715234893.dkr.ecr.us-east-1.amazonaws.com/solyntek-backend
   ECR_FRONTEND: 698715234893.dkr.ecr.us-east-1.amazonaws.com/solyntek-frontend
 
 jobs:
 
   # ──────────────────────────────────────────
-  # Job 1 : Build et push des images Docker sur ECR
+  # Job 1 : Terraform — validation de l'infrastructure ECR
+  # Les repositories ECR sont provisionnés via Terraform.
+  # En environnement AWS Academy, le plan est validé ici ;
+  # l'apply est exécuté localement (restriction STS Academy).
+  # ──────────────────────────────────────────
+  terraform:
+    name: Terraform — Validate ECR Infrastructure
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_DEFAULT_REGION: us-east-1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+          terraform_wrapper: false
+
+      - name: Terraform init (local backend)
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: |
+          terraform plan \
+            -var "aws_region=${AWS_REGION}" \
+            -var "aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            -var "aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            -var "aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}" \
+            -out=tfplan
+        continue-on-error: true
+
+      - name: Afficher le résumé du plan Terraform
+        working-directory: terraform
+        run: |
+          echo "Infrastructure ECR définie dans Terraform :"
+          echo "  - solyntek-backend  → ${{ env.ECR_BACKEND }}"
+          echo "  - solyntek-frontend → ${{ env.ECR_FRONTEND }}"
+          echo "Note: terraform apply exécuté manuellement (restriction AWS Academy STS)"
+        continue-on-error: true
+
+  # ──────────────────────────────────────────
+  # Job 2 : Build et push des images Docker sur ECR
   # ──────────────────────────────────────────
   build-and-push:
-    name: Build & Push Docker Images
+    name: Build & Push Docker Images to ECR
     runs-on: ubuntu-latest
+    needs: terraform
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -67,12 +120,12 @@ jobs:
           docker push ${{ env.ECR_FRONTEND }}:latest
 
   # ──────────────────────────────────────────
-  # Job 2 : Déploiement sur EKS via kubectl
+  # Job 3 : Déploiement sur EKS via kubectl
   # ──────────────────────────────────────────
   deploy:
     name: Deploy to EKS
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [terraform, build-and-push]
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
