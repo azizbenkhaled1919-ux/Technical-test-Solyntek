@@ -35,6 +35,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
+          mask-aws-account-id: false
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -62,7 +63,6 @@ jobs:
         continue-on-error: true
 
       - name: Afficher le résumé du plan Terraform
-        working-directory: terraform
         run: |
           echo "Infrastructure ECR définie dans Terraform :"
           echo "  - solyntek-backend  → ${{ env.ECR_BACKEND }}"
@@ -89,15 +89,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
+          mask-aws-account-id: false
 
       - name: Debug AWS credentials
         run: |
           echo "Key ID (4 premiers car): ${AWS_ACCESS_KEY_ID:0:4}"
           echo "Session token length: ${#AWS_SESSION_TOKEN}"
-          aws sts get-caller-identity
+          aws sts get-caller-identity --region us-east-1 --endpoint-url https://sts.us-east-1.amazonaws.com
 
       - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          aws ecr get-login-password --region us-east-1 \
+            --endpoint-url https://ecr.us-east-1.amazonaws.com | \
+          docker login --username AWS --password-stdin \
+            698715234893.dkr.ecr.us-east-1.amazonaws.com
 
       - name: Build and push backend image
         run: |
@@ -137,6 +142,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
+          mask-aws-account-id: false
 
       - name: Configure kubectl pour EKS
         run: |
