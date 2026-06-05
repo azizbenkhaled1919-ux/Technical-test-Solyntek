@@ -11,67 +11,19 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  TF_IN_AUTOMATION: true
   CLUSTER_NAME: solyntek
+  # URLs ECR fixes — les repositories sont gérés par Terraform (exécuté localement)
+  ECR_BACKEND: 698715234893.dkr.ecr.us-east-1.amazonaws.com/solyntek-backend
+  ECR_FRONTEND: 698715234893.dkr.ecr.us-east-1.amazonaws.com/solyntek-frontend
 
 jobs:
 
   # ──────────────────────────────────────────
-  # Job 1 : Terraform → crée/met à jour les repositories ECR
-  # ──────────────────────────────────────────
-  terraform:
-    name: Provision ECR with Terraform
-    runs-on: ubuntu-latest
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-      AWS_DEFAULT_REGION: us-east-1
-    outputs:
-      ecr_backend_url:  ${{ steps.tf_output.outputs.ecr_backend_url }}
-      ecr_frontend_url: ${{ steps.tf_output.outputs.ecr_frontend_url }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.8.5
-          terraform_wrapper: false
-
-      - name: Terraform init
-        working-directory: terraform
-        run: terraform init
-
-      - name: Terraform validate
-        working-directory: terraform
-        run: terraform validate
-
-      - name: Terraform apply
-        working-directory: terraform
-        run: |
-          terraform apply -auto-approve -input=false \
-            -var "aws_region=${AWS_REGION}" \
-            -var "aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
-            -var "aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
-            -var "aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}"
-
-      - name: Capture Terraform outputs
-        id: tf_output
-        working-directory: terraform
-        run: |
-          echo "ecr_backend_url=$(terraform output -raw ecr_backend_url)"   >> "${GITHUB_OUTPUT}"
-          echo "ecr_frontend_url=$(terraform output -raw ecr_frontend_url)" >> "${GITHUB_OUTPUT}"
-
-  # ──────────────────────────────────────────
-  # Job 2 : Build et push des images Docker sur ECR
+  # Job 1 : Build et push des images Docker sur ECR
   # ──────────────────────────────────────────
   build-and-push:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
-    needs: terraform
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -93,34 +45,34 @@ jobs:
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
           docker login --username AWS --password-stdin \
-            ${{ needs.terraform.outputs.ecr_backend_url }}
+            ${{ env.ECR_BACKEND }}
 
       - name: Build and push backend image
         run: |
           docker build \
-            -t ${{ needs.terraform.outputs.ecr_backend_url }}:${{ github.sha }} \
-            -t ${{ needs.terraform.outputs.ecr_backend_url }}:latest \
+            -t ${{ env.ECR_BACKEND }}:${{ github.sha }} \
+            -t ${{ env.ECR_BACKEND }}:latest \
             ./backend
-          docker push ${{ needs.terraform.outputs.ecr_backend_url }}:${{ github.sha }}
-          docker push ${{ needs.terraform.outputs.ecr_backend_url }}:latest
+          docker push ${{ env.ECR_BACKEND }}:${{ github.sha }}
+          docker push ${{ env.ECR_BACKEND }}:latest
 
       - name: Build and push frontend image
         run: |
           docker build \
             --build-arg REACT_APP_SERVER_URL=http://LOAD_BALANCER_URL/api \
-            -t ${{ needs.terraform.outputs.ecr_frontend_url }}:${{ github.sha }} \
-            -t ${{ needs.terraform.outputs.ecr_frontend_url }}:latest \
+            -t ${{ env.ECR_FRONTEND }}:${{ github.sha }} \
+            -t ${{ env.ECR_FRONTEND }}:latest \
             ./frontend
-          docker push ${{ needs.terraform.outputs.ecr_frontend_url }}:${{ github.sha }}
-          docker push ${{ needs.terraform.outputs.ecr_frontend_url }}:latest
+          docker push ${{ env.ECR_FRONTEND }}:${{ github.sha }}
+          docker push ${{ env.ECR_FRONTEND }}:latest
 
   # ──────────────────────────────────────────
-  # Job 3 : Déploiement sur EKS via kubectl
+  # Job 2 : Déploiement sur EKS via kubectl
   # ──────────────────────────────────────────
   deploy:
     name: Deploy to EKS
     runs-on: ubuntu-latest
-    needs: [terraform, build-and-push]
+    needs: build-and-push
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -146,9 +98,9 @@ jobs:
 
       - name: Mettre à jour les images dans les manifests k8s
         run: |
-          sed -i "s|image: backend:latest|image: ${{ needs.terraform.outputs.ecr_backend_url }}:${{ github.sha }}|g" \
+          sed -i "s|image: backend:latest|image: ${{ env.ECR_BACKEND }}:${{ github.sha }}|g" \
             k8s/backend/deployment.yaml
-          sed -i "s|image: frontend:latest|image: ${{ needs.terraform.outputs.ecr_frontend_url }}:${{ github.sha }}|g" \
+          sed -i "s|image: frontend:latest|image: ${{ env.ECR_FRONTEND }}:${{ github.sha }}|g" \
             k8s/frontend/deployment.yaml
           sed -i "s|imagePullPolicy: Never|imagePullPolicy: Always|g" \
             k8s/backend/deployment.yaml k8s/frontend/deployment.yaml
