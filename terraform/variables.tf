@@ -1,14 +1,9 @@
-variable "aws_region" {
-  description = "Région AWS"
-  type        = string
-  default     = "us-east-1"
+output "ecr_backend_url" {
+  description = "URL du repository ECR pour le backend"
+  value       = aws_ecr_repository.backend.repository_url
 }
 
-variable "tags" {
-  description = "Tags appliqués à toutes les ressources AWS"
-  type        = map(string)
-  default = {
-    Environment = "production"
-    Project     = "solyntek"
-  }
+output "ecr_frontend_url" {
+  description = "URL du repository ECR pour le frontend"
+  value       = aws_ecr_repository.frontend.repository_url
 }
