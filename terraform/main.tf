@@ -22,6 +22,7 @@ provider "aws" {
 
 # ─────────────────────────────────────────────
 # ECR : repositories pour les images Docker
+# Les repositories existent déjà, Terraform les importe
 # ─────────────────────────────────────────────
 resource "aws_ecr_repository" "backend" {
   name                 = "solyntek-backend"
@@ -35,4 +36,14 @@ resource "aws_ecr_repository" "frontend" {
   image_tag_mutability = "MUTABLE"
   force_delete         = true
   tags                 = var.tags
+}
+
+import {
+  to = aws_ecr_repository.backend
+  id = "solyntek-backend"
+}
+
+import {
+  to = aws_ecr_repository.frontend
+  id = "solyntek-frontend"
 }
