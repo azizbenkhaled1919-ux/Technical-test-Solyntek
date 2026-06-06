@@ -8,16 +8,18 @@ on:
 
 permissions:
   contents: read
+  packages: write  # Requis pour pousser vers ghcr.io
 
 env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: solyntek
-  ECR_BACKEND: 698715234893.dkr.ecr.us-east-1.amazonaws.com/solyntek-backend
-  ECR_FRONTEND: 698715234893.dkr.ecr.us-east-1.amazonaws.com/solyntek-frontend
+  REGISTRY: ghcr.io
+  IMAGE_BACKEND: ghcr.io/${{ github.repository_owner }}/solyntek-backend
+  IMAGE_FRONTEND: ghcr.io/${{ github.repository_owner }}/solyntek-frontend
 
 jobs:
   terraform:
-    name: Terraform — Validate ECR Infrastructure
+    name: Terraform — Validate Infrastructure
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -46,38 +48,38 @@ jobs:
         run: terraform validate
 
   build-and-push:
-    name: Build & Push Docker Images to ECR
+    name: Build & Push Docker Images to GHCR
     runs-on: ubuntu-latest
     needs: terraform
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-          docker login --username AWS --password-stdin 698715234893.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}  # Token automatique, aucun secret à configurer
 
       - name: Build and push backend image
         run: |
-          docker build -t ${{ env.ECR_BACKEND }}:${{ github.sha }} -t ${{ env.ECR_BACKEND }}:latest ./backend
-          docker push ${{ env.ECR_BACKEND }}:${{ github.sha }}
-          docker push ${{ env.ECR_BACKEND }}:latest
+          docker build \
+            -t ${{ env.IMAGE_BACKEND }}:${{ github.sha }} \
+            -t ${{ env.IMAGE_BACKEND }}:latest \
+            ./backend
+          docker push ${{ env.IMAGE_BACKEND }}:${{ github.sha }}
+          docker push ${{ env.IMAGE_BACKEND }}:latest
 
       - name: Build and push frontend image
         run: |
-          docker build --build-arg REACT_APP_SERVER_URL=http://LOAD_BALANCER_URL/api \
-            -t ${{ env.ECR_FRONTEND }}:${{ github.sha }} -t ${{ env.ECR_FRONTEND }}:latest ./frontend
-          docker push ${{ env.ECR_FRONTEND }}:${{ github.sha }}
-          docker push ${{ env.ECR_FRONTEND }}:latest
+          docker build \
+            --build-arg REACT_APP_SERVER_URL=http://LOAD_BALANCER_URL/api \
+            -t ${{ env.IMAGE_FRONTEND }}:${{ github.sha }} \
+            -t ${{ env.IMAGE_FRONTEND }}:latest \
+            ./frontend
+          docker push ${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
+          docker push ${{ env.IMAGE_FRONTEND }}:latest
 
   deploy:
     name: Deploy to EKS
@@ -99,10 +101,20 @@ jobs:
         run: |
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
 
+      - name: Create GHCR image pull secret
+        run: |
+          # Permet à EKS de puller les images depuis ghcr.io
+          kubectl create secret docker-registry ghcr-secret \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            --namespace=default \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Update manifests
         run: |
-          sed -i "s|image: backend:latest|image: ${{ env.ECR_BACKEND }}:${{ github.sha }}|g" k8s/backend/deployment.yaml
-          sed -i "s|image: frontend:latest|image: ${{ env.ECR_FRONTEND }}:${{ github.sha }}|g" k8s/frontend/deployment.yaml
+          sed -i "s|image: backend:latest|image: ${{ env.IMAGE_BACKEND }}:${{ github.sha }}|g" k8s/backend/deployment.yaml
+          sed -i "s|image: frontend:latest|image: ${{ env.IMAGE_FRONTEND }}:${{ github.sha }}|g" k8s/frontend/deployment.yaml
           sed -i "s|change_me_jwt_secret|${{ secrets.JWT_SECRET }}|g" k8s/backend/secret.yaml
 
       - name: Apply manifests
